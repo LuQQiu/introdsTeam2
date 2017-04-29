@@ -1,0 +1,646 @@
+---
+title: "Movie Kaggle"
+author: "Thanh Nguyen,Hannah Wang, Lu Qiu"
+date: "April 19, 2017"
+output: word_document
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##### Objectives
+Create a model to predict the gross income of a movie based on available parameters in the movie dataset downloaded from Kaggle website.
+
+##### Question Development
+Our question was developed based on a similar but simpler model that some of us worked on previously. The data was collected from all movies shown in the theathers in 2012 (n=30) with 8 variables and 3 were selected into the model. Since the sample size was small for the previous project, we want to create a better model to predict movie gross sales from a larger sample with more parameters.
+
+There are several predictions on how well movies would do in box office that we could find on Google, but most of them were based on the reviewews' opinion rather than from a statistic model. Futheremore, on Kaggle, where we downloaded our data, some people have also shared different models that they developed from the dataset. HOwever, there isn't any formal models that was used to give a prediction on a movie gross income.
+
+##### Data Gathering
+Our very first approach was to scrap all available movie data from http://www.boxofficemojo.com/. However, we decided that it isn't doable given the limited time that we have for our project. We then did our research and found the movie dataset that was published on Kaggle. The data first is in a readable format and second has the information that we were looking for in order to create our prediction model.
+
+##### Preparing Data for analysis
+Below are the steps that were used to prepare our data for analysis
+#### Data import
+
+```{r}
+#Import Dataset
+moviedata <- data.frame(read.csv("movie_metadata.csv"))
+```
+
+#### Exploratory Data Analysis
+
+```{r}
+#### Problem 1 -- many NA values
+#### Problem 2 -- too many categorical variables and each have many categories
+#### Problem 3 -- many variables may have severe multicolinearity
+
+head(moviedata)
+str(moviedata)
+summary(moviedata)
+
+#### Problem 4 -- many duplicate rows
+
+#123 movies are duplicated, have the same movie_title and plot_keywords
+index1 <- duplicated(moviedata[,"movie_title"])
+index2 <- duplicated(moviedata[,"plot_keywords"])
+index <- index1 & index2
+sum(index)
+
+#### Problem 5 -- skewness in gross data
+
+#Since we want to use gross income as our dependent variable, we need to do some test to see  if it is normally distributed. 
+hist(moviedata$gross)
+shapiro.test(moviedata$gross)
+#Look like we have a right skewed dataset.
+
+```
+
+Based on the initial exploratory Data Analysis, we conduct the following data cleaning, feature engineering and feature selection processes.
+
+#### Data cleaning step 1  -- delete duplicate rows
+
+```{r}
+#delete the duplicate rows according to movie title and plot keywords
+index1 <- duplicated(moviedata[,"movie_title"])
+index2 <- duplicated(moviedata[,"plot_keywords"])
+index <- index1 & index2
+moviedata <- moviedata[!index,]
+```
+
+#### Data cleaning step 2  -- delete NA gross and entries
+
+```{r}
+#Since want want to use gross as our dependent variables, we need to obmit all entries that have NA for gross
+moviedata <- moviedata[!is.na(moviedata$gross), ]
+nrow(moviedata)
+
+#It is surprise to find that our data have so many 0 gross data.This was either caused by (a) no gross number was found in certain movie page, or (b) the response returned by scrapy http request returned nothing in short period of time. We may also need to delete those rows.
+moviedata <- moviedata[moviedata$gross != 0,]
+summary(moviedata$gross)
+nrow(moviedata)
+
+#The min of gross is 162, no negative value, no zero.
+```
+
+#### Data cleaning step 3 -- use mean value to replace missing value of numerical features
+
+```{r}
+moviedata$imdb_score[is.na(moviedata$imdb_score)] <- mean(moviedata$imdb_score,na.rm = TRUE)
+moviedata$budget[is.na(moviedata$budget)] <- mean(moviedata$budget,na.rm = TRUE)
+moviedata$duration[is.na(moviedata$duration)] <- mean(moviedata$duration,na.rm = TRUE)
+moviedata$director_facebook_likes[is.na(moviedata$director_facebook_likes)] <- mean(moviedata$director_facebook_likes,na.rm = TRUE)
+moviedata$num_critic_for_reviews[is.na(moviedata$num_critic_for_reviews)] <- mean(moviedata$num_critic_for_reviews,na.rm = TRUE)
+moviedata$actor_3_facebook_likes[is.na(moviedata$actor_3_facebook_likes)] <- mean(moviedata$actor_3_facebook_likes,na.rm = TRUE)
+moviedata$actor_1_facebook_likes[is.na(moviedata$actor_1_facebook_likes)] <- mean(moviedata$actor_1_facebook_likes,na.rm = TRUE)
+moviedata$num_voted_users[is.na(moviedata$num_voted_users)] <- mean(moviedata$num_voted_users,na.rm = TRUE)
+moviedata$cast_total_facebook_likes[is.na(moviedata$cast_total_facebook_likes)] <- mean(moviedata$cast_total_facebook_likes,na.rm = TRUE)
+moviedata$facenumber_in_poster[is.na(moviedata$facenumber_in_poster)] <- mean(moviedata$facenumber_in_poster,na.rm = TRUE)
+moviedata$num_user_for_reviews[is.na(moviedata$num_user_for_reviews)] <- mean(moviedata$num_user_for_reviews,na.rm = TRUE)
+# need to consider later
+moviedata$title_year[is.na(moviedata$title_year)] <- mean(moviedata$title_year,na.rm = TRUE)
+moviedata$actor_2_facebook_likes[is.na(moviedata$actor_2_facebook_likes)] <- mean(moviedata$actor_2_facebook_likes,na.rm = TRUE)
+moviedata$imdb_score[is.na(moviedata$imdb_score)] <- mean(moviedata$imdb_score,na.rm = TRUE)
+moviedata$aspect_ratio[is.na(moviedata$aspect_ratio)] <- mean(moviedata$aspect_ratio,na.rm = TRUE)
+moviedata$movie_facebook_likes[is.na(moviedata$movie_facebook_likes)] <- mean(moviedata$movie_facebook_likes,na.rm = TRUE)
+```
+
+#### Data cleaning step 4  -- transform continuous variable to log(x) format to avoid skewness
+
+```{r}
+#Transformed it to log(x) format, much better in histagram, but still have skewness
+moviedata$gross = log(moviedata$gross)
+hist(moviedata$gross)
+shapiro.test(moviedata$gross)
+```
+
+#### EDA-Part 2 -- After data cleaning is done, we want to see if there is any correlation between gross and other variables (continous variables only)
+```{r}
+#### Correlation -- we want to do the initial check to see if there is any linear correlation between gross and other numeric variables that we have
+library(corrplot)
+#Based on the scatterplots, we could see some linear correlation between gross and imdb_score, num_critic_for_reviews, num_user_for_reviews, movie_facebook_like
+pairs(gross ~ duration + budget + imdb_score + num_critic_for_reviews + num_user_for_reviews + movie_facebook_likes + director_facebook_likes + actor_1_facebook_likes + actor_2_facebook_likes + actor_3_facebook_likes + cast_total_facebook_likes, data = moviedata)
+
+#Correlation Matrix -- There is moderate correlation between gross and num_critic_for_reviews, num_user_for_reviews, and somewhat correlation between gross and cast_total_facebook_likes, movie_facebook_like. Also, there is some colinearity between the variables. 
+corrplot(round(cor(subset(moviedata, select=c(gross, duration, budget, imdb_score, num_critic_for_reviews, num_user_for_reviews, movie_facebook_likes, director_facebook_likes, actor_1_facebook_likes, actor_2_facebook_likes,actor_3_facebook_likes, cast_total_facebook_likes))),2), method="circle")
+```
+
+#### Feature Engineering Step 1  -- recode genres into 1/0 colums
+
+```{r}
+#The dataset have all genres combined as a string. Hence, we need to recode the genres into different column as 1/0 for further analysis.
+moviedata$genres_action<- ifelse(grepl("Action", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_adventure<- ifelse(grepl("Adventure", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_animation<- ifelse(grepl("Animation", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_biography<- ifelse(grepl("Biography", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_comedy<- ifelse(grepl("Comedy", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_crime<- ifelse(grepl("Crime", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_documentary<- ifelse(grepl("Documentary", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_drama<- ifelse(grepl("Drama", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_family<- ifelse(grepl("Family", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_fantasy<- ifelse(grepl("Fantasy", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_film_noir<- ifelse(grepl("Film-Noir", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_game_show<- ifelse(grepl("Game-Show", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_history<- ifelse(grepl("History", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_horror<- ifelse(grepl("Horror", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_music<- ifelse(grepl("Music", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_musical<- ifelse(grepl("Musical", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_mystery<- ifelse(grepl("Mystery", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_news<- ifelse(grepl("News", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_reality_tv<- ifelse(grepl("Reality-TV", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_romance<- ifelse(grepl("Romance", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_sci_fi<- ifelse(grepl("Sci-Fi", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_short<- ifelse(grepl("Short", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_sport<- ifelse(grepl("Sport", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_thriller<- ifelse(grepl("Thriller", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_war<- ifelse(grepl("War", moviedata$genres)==TRUE, 1,0)
+moviedata$genres_western<- ifelse(grepl("Western", moviedata$genres)==TRUE, 1,0)
+```
+
+#### Feature engineering step 2  -- recode plot_keywords into 1/0 colums
+
+We add 18 frequently appeared keywords from plot_keywords column of our dataset.
+Those frequently appeared keywords are generated through text mining.
+
+### Feature engineering step 2  -- plot_keywords -- text mining on all data
+
+```{r}
+library(tm) 
+#delete those have missing values in plot_keywords
+movie_tm <- moviedata[moviedata$plot_keywords != "", ]
+
+#split the plot_keywords and add each word into the keywords list
+keywords <- c()
+i <- 1
+for (ins in movie_tm$plot_keywords){
+  kw <- strsplit(ins, "[|]")
+  if (length(kw) != 0){
+    for (word in kw[[1]]){
+      if (!(word %in% keywords)){
+        keywords[i] <- word
+        i = i + 1
+      }
+    }
+  }
+}
+
+#text mining, remove the normal words
+corpus <- VCorpus(VectorSource(keywords)) #save text into corpus
+corpus <- tm_map(corpus, PlainTextDocument, lazy = T) # creat a plain text document
+corpus<-tm_map(corpus,removeWords,stopwords(kind="en"))
+corpus <- tm_map(corpus, removeWords, c("base",'camera','fall','movie','tv','film','charact','and', 'in', 'of', 'the', 'on','to', 'title','reference','female','male','by','man','woman','year'))
+corpus <- tm_map(corpus, removeWords, c("based","character","star"))
+
+tdm <- TermDocumentMatrix(corpus,
+                          control = list(wordLengths = c(1, Inf)))
+term.freq <- rowSums(as.matrix(tdm))
+term.freq <- subset(term.freq, term.freq >= 2)
+df <- data.frame(term = names(term.freq), freq = term.freq,stringsAsFactors=FALSE)
+df_sorted <- df[order(-df$freq),]
+
+df_sorted[rownames(df_sorted)=='new',]$term <- "new york"
+rownames(df_sorted[rownames(df_sorted)=='new',]) <- "new york"
+
+#plot the most frequent words
+library(ggplot2)
+p <- ggplot(df_sorted[1:10,], aes(x=term, y=freq,fill=freq)) + geom_bar(stat="identity") +
+  xlab("Keywords")  + ylab("Frequency")+coord_flip()
+p +labs( y = "Keywords", x = "Frequency") +
+  theme_bw() + 
+  theme(legend.position = "None") 
+
+#Wordcloud
+library(wordcloud2)
+figPath = system.file("examples/t.png",package = "wordcloud2")
+wordcloud2(df_sorted,figPath = figPath, size = 1.5,color="random-dark")
+```
+
+From the previous text mining on the whole dataset, we can find that sex, war, car, school, relationship, american, death, child, new york, police is the top 10 frequently appear words in plotline keywords.
+
+### Feature engineering step 2  -- plot_keywords -- text mining on top 250 gross movies
+
+```{r}
+#subset the top250 gross data
+movie_data_sorted <- movie_tm[order(-movie_tm$gross),]
+movie_topgross <- subset(movie_tm,movie_tm$gross>=movie_data_sorted[250,]$gross)
+
+#split the plot_keywords and add each word into the keywords list
+keywords <- c()
+i <- 1
+for (ins in movie_topgross$plot_keywords){
+  kw <- strsplit(ins, "[|]")
+  if (length(kw) != 0){
+    for (word in kw[[1]]){
+      if (!(word %in% keywords)){
+        keywords[i] <- word
+        i = i + 1
+      }
+    }
+  }
+}
+
+#text mining, remove the normal words
+corpus <- VCorpus(VectorSource(keywords)) #save text into corpus
+corpus <- tm_map(corpus, PlainTextDocument, lazy = T) # creat a plain text document
+corpus<-tm_map(corpus,removeWords,stopwords(kind="en"))
+corpus <- tm_map(corpus, removeWords, c("base",'camera','fall','movie','tv','film','charact','and', 'in', 'of', 'the', 'on','to', 'title','reference','female','male','by','man','woman','year'))
+corpus <- tm_map(corpus, removeWords, c("based","character","star"))
+
+tdm <- TermDocumentMatrix(corpus,
+                          control = list(wordLengths = c(1, Inf)))
+term.freq <- rowSums(as.matrix(tdm))
+term.freq <- subset(term.freq, term.freq >= 5)
+df <- data.frame(term = names(term.freq), freq = term.freq,stringsAsFactors=FALSE)
+df_sorted <- df[order(-df$freq),]
+
+#plot the most frequent words
+p <- ggplot(df_sorted[1:10,], aes(x=term, y=freq,fill=freq)) + geom_bar(stat="identity") +
+  xlab("Keywords")  + ylab("Frequency")+coord_flip()
+p +labs( y = "Keywords", x = "Frequency") +
+  theme_bw() + 
+  theme(legend.position = "None") 
+
+#Wordcloud
+term.freq <- rowSums(as.matrix(tdm))
+term.freq <- subset(term.freq, term.freq >= 1)
+df <- data.frame(term = names(term.freq), freq = term.freq,stringsAsFactors=FALSE)
+df_sorted <- df[order(-df$freq),]
+figPath = system.file("examples/t.png",package = "wordcloud2")
+wordcloud2(df_sorted,shape="diamond", size = 1.5,color="random-dark")
+
+```
+
+From the previous text mining on movies that have the top 250 gross data, we can find that car, relationship, space, father, hero, death, fairy, animal, alien, and agent are the top 10 frequently appeared keywords.
+
+The keywords in top 250 gross data is so different from keywords in the whole dataset. The difference in keywords maybe can explain the difference in final gross, so we add all those frequently appeared keywords as our variables and see whether they can actually make a difference.
+
+```{r}
+#add 18 plot_keywords
+moviedata$keywords_space <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "space", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_space<- 1
+
+moviedata$keywords_relationship <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "relationship", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_relationship <- 1
+
+moviedata$keywords_hero <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "hero", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_hero <- 1
+
+moviedata$keywords_father <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "father", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_father <- 1
+
+moviedata$keywords_fairy <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "fairy", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_fairy<- 1
+
+moviedata$keywords_death <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "death", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_death <- 1
+
+moviedata$keywords_car <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "car", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_car <- 1
+
+moviedata$keywords_animal <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "animal ", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_animal  <- 1
+
+moviedata$keywords_alien <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "alien", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_alien <- 1
+
+moviedata$keywords_agent <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "agent", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_agent <- 1
+
+moviedata$keywords_war <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "war", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_war <- 1
+
+moviedata$keywords_school <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "school", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_school <- 1
+
+moviedata$keywords_police <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "police", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_police <- 1
+
+moviedata$keywords_nudity <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "nudity", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_nudity<- 1
+
+moviedata$keywords_american <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "american", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_american <- 1
+
+moviedata$keywords_sex <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "sex", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_sex <- 1
+
+moviedata$keywords_girl <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "girl", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_girl <- 1
+
+moviedata$keywords_child <- 0
+moviedata[moviedata[["plot_keywords"]] %in% grep(pattern = "child", x = moviedata[["plot_keywords"]], value = TRUE), ]$keywords_child <- 1
+```
+
+#### Feature engineering step 3  -- recode content_rating into 1/0 colums
+
+```{r}
+library(caret)
+dmy <- dummyVars(~content_rating,data=moviedata)
+dmydf <- data.frame(predict(dmy,newdata=moviedata))
+moviedata <- cbind(moviedata,dmydf)
+```
+
+#### Feature engineering step 4  -- recode country lanuage into 1/0 colums
+
+```{r}
+#country language
+moviedata$isenglish[moviedata$language == "English"] <- 1
+moviedata$isenglish[moviedata$language != "English"] <- 0
+moviedata$isusa[moviedata$country == "USA"] <- 1
+moviedata$isusa[moviedata$country != "USA"] <- 0
+#3235 movies from USA
+sum(moviedata$isusa, na.rm=TRUE)
+```
+
+#### Feature engineering step 5  -- recode color into 1/0 colums
+
+```{r}
+#country language
+summary(moviedata$color)
+moviedata$isColor[moviedata$color == "Color"] <- 1
+moviedata$isColor[moviedata$color != "Color"] <- 0
+```
+
+#### Finished data cleaning and feature engineering process
+
+We may not use all the variables generated from our data cleaning process.
+We choose variables based on our purpose and our model.
+
+```{r}
+cleanedmoviedata <- moviedata
+str(cleanedmoviedata)
+colnames(cleanedmoviedata)
+```
+
+#### Feature selection
+
+We turn many categorical variables into 1/0 format, so that we can fit the requirement of some models.
+
+After the feature engineering process, we have 93 features:
+isColor, director_name, num_critic_for_reviews, duration, director_facebook_likes, actor_3_facebook_likes, actor_2_name, actor_1_facebook_likes, gross, genres, actor_1_name, movie_title, num_voted_users, cast_total_facebook_likes, actor_3_name, facenumber_in_poster, plot_keywords, movie_imdb_link, num_user_for_reviews, language, country, content_rating, budget, title_year, actor_2_facebook_likes, imdb_score, aspect_ratio, movie_facebook_likes, genres_action, genres_adventure, genres_animation, genres_biography, genres_comedy, genres_crime, genres_documentary, genres_drama, genres_family, genres_fantasy, genres_film_noir, genres_game_show, genres_history, genres_horror, genres_music, genres_musical, genres_mystery, genres_news, genres_reality_tv, genres_romance, genres_sci_fi, genres_short, genres_sport, genres_thriller, genres_war, genres_western, keywords_space,keywords_relationship, keywords_hero, keywords_father, keywords_fairy, keywords_death, keywords_car, keywords_animal, keywords_alien, keywords_agent, keywords_war, keywords_school, keywords_police, keywords_nudity, keywords_american, keywords_sex, keywords_girl, keywords_child, content_rating., content_rating.Approved, content_rating.G, content_rating.GP, content_rating.M, content_rating.NC.17, content_rating.Not.Rated, content_rating.Passed, content_rating.PG, content_rating.PG.13, content_rating.R, content_rating.TV.14, content_rating.TV.G, content_rating.TV.MA, content_rating.TV.PG, content_rating.TV.Y, content_rating.TV.Y7, content_rating.Unrated, content_rating.X, isenglish, isusa
+
+We need to choose which features to include in each of our models
+
+### Feature selection1 -- Random Forest
+Random Forest is not only a good way to make predictions but also a good way to select features because it will tell us the importance order of features.
+
+```{r}
+library(randomForest)
+#random forest has a limitation, it cannot run on categorical variables which has more than 53 variables, so first we have to subset our data.
+#random forest also not allow predictors have any NA values.
+movie_fs = subset(cleanedmoviedata, select = c(isColor, num_critic_for_reviews, duration, director_facebook_likes, actor_3_facebook_likes, actor_1_facebook_likes, num_voted_users, cast_total_facebook_likes, facenumber_in_poster, num_user_for_reviews, budget, title_year, actor_2_facebook_likes, imdb_score, aspect_ratio, movie_facebook_likes, genres_action, genres_adventure, genres_animation, genres_biography, genres_comedy, genres_crime, genres_documentary, genres_drama, genres_family, genres_fantasy, genres_film_noir, genres_game_show, genres_history, genres_horror, genres_music, genres_musical, genres_mystery, genres_news, genres_reality_tv, genres_romance, genres_sci_fi, genres_short, genres_sport, genres_thriller, genres_war, genres_western, keywords_space,keywords_relationship, keywords_hero, keywords_father, keywords_fairy, keywords_death, keywords_car, keywords_animal, keywords_alien, keywords_agent, keywords_war, keywords_school, keywords_police, keywords_nudity, keywords_american, keywords_sex, keywords_girl, keywords_child, content_rating.Approved, content_rating.G, content_rating.GP, content_rating.M, content_rating.NC.17, content_rating.Passed, content_rating.PG, content_rating.PG.13, content_rating.R, content_rating.TV.14, content_rating.TV.G, content_rating.TV.MA, content_rating.TV.PG, content_rating.TV.Y, content_rating.TV.Y7, content_rating.X, isenglish, isusa))
+rf <- randomForest(movie_fs,cleanedmoviedata$gross,ntree=100,importance=TRUE,proximity = TRUE)
+importance(rf)
+varImpPlot(rf)
+```
+
+From random forest, we can know the 28 important variables in predicting gross is:
+budget, imdb_score, title_year, isusa, isenglish,duration,aspect_ratio,
+num_user_for_reviews, num_voted_users, num_critic_for_reviews 
+cast_total_facebook_likes, movie_facebook_likes,director_facebook_likes, actor_1_facebook_likes,actor_2_facebook_likes,actor_3_facebook_likes,
+genres_family, genres_drama, genres_crime, genres_horror, genres_comedy, genres_adventure,genres_thriller, genres_sci_fi
+content_rating.R,content_rating.PG.13, content_rating.PG
+keywords_sex,
+
+### Feature selection2 -- Lasso Regression
+
+```{r}
+library(glmnet)
+x <- model.matrix(cleanedmoviedata$gross ~ ., movie_fs)[,-1]
+y <- cleanedmoviedata$gross
+grid <- 10 ^ seq(10,-2,length=100)
+lasso.mod <- glmnet(x,y, alpha=1,lambda = grid)
+cv.out <- cv.glmnet(x, y,alpha=1)
+bestlam <- cv.out$lambda.min
+out <- glmnet(x,y,alpha=1,lambda = grid)
+lasso.coef <- predict(out, type='coefficients',s=bestlam)[1:ncol(movie_fs),]
+lasso.coef[lasso.coef!=0]
+```
+
+From best lambda lasso regression, 58 variables have none zero coefficients.
+Still too much variables, we increase the lambda.
+
+```{r}
+lasso.coef <- predict(out, type='coefficients',s=0.06)[1:ncol(movie_fs),]
+lasso.coef[lasso.coef!=0]
+```
+
+With 0.1 lambda lasso regression, 18 variables have none zero coefficients:
+isColor, num_critic_for_reviews, duration, num_voted_users, cast_total_facebook_likes , num_user_for_reviews, title_year, actor_2_facebook_likes, genres_action, genres_animation, genres_comedy, genres_documentary, genres_drama, genres_family, genres_film_noir, content_rating.G, content_rating.PG, content_rating.PG.13
+
+With 0.06 lambda lasso regression, 25 variables have none zero coefficients,
+The additional non zero coefficients are :
+movie_facebook_likes, genres_biography, genres_mystery,genres_sci_fi, genres_thriller,  keywords_sex, content_rating.R 
+
+### Feature selection3 -- best fit, forward, backward
+
+```{r}
+library(leaps)
+movie_subset = subset(cleanedmoviedata, select = c(gross, 
+isColor, num_critic_for_reviews, duration, director_facebook_likes, actor_3_facebook_likes, actor_1_facebook_likes, num_voted_users, cast_total_facebook_likes, facenumber_in_poster, num_user_for_reviews, budget, title_year, actor_2_facebook_likes, imdb_score, aspect_ratio, movie_facebook_likes, genres_action, genres_adventure, genres_animation, genres_biography, genres_comedy, genres_crime, genres_documentary, 
+genres_drama, genres_family, genres_fantasy, genres_film_noir, genres_game_show, genres_history, genres_horror, genres_music, genres_musical, genres_mystery, genres_news, genres_reality_tv, genres_romance, genres_sci_fi, genres_short, genres_sport, genres_thriller, genres_war, genres_western,
+keywords_space,keywords_relationship, keywords_hero, keywords_father, keywords_fairy, keywords_death, keywords_car, keywords_animal, keywords_alien, keywords_agent, keywords_war, keywords_school, keywords_police, keywords_nudity, keywords_american, keywords_sex, keywords_girl, keywords_child, content_rating.Approved, content_rating.G, content_rating.GP, content_rating.M, content_rating.NC.17, content_rating.Passed, content_rating.PG, content_rating.PG.13, content_rating.R, content_rating.TV.14, content_rating.TV.G, content_rating.TV.MA, content_rating.TV.PG, content_rating.TV.Y, content_rating.TV.Y7, content_rating.X, isenglish, isusa))
+reg.seqrep <- regsubsets(gross~., data = movie_subset, nvmax = 20, nbest = 1, method = "seqrep")
+plot(reg.seqrep, scale = "adjr2", main = "Adjusted R^2")
+summary(reg.seqrep)
+```
+
+Features recommemded by the hybrid approach is: 
+isColor, duration, title_year, aspect_ratio
+isusa, isenglish,
+num_critic_for_reviews,
+cast_total_facebook_likes, movie_facebook_likes, director_facebook_likes
+genres_action,  genres_comedy, genres_drama, genres_family, genres_thriller,
+genres_sci_fi, 
+content_rating.G, content_rating.PG,content_rating.PG.13,content_rating.R,
+
+
+
+According to the result of random forest, lasso regression and hybrid of forward and backward method, we decide to choose the following features to conduct our model analysis :
+
+### 26 feature advised to be selected:
+
+isColor, duration, title_year, budget, aspect_ratio,imdb_score,
+isusa, isenglish,
+num_voted_users, num_user_for_reviews, num_critic_for_reviews,
+cast_total_facebook_likes, movie_facebook_likes,  director_facebook_likes
+genres_action,  genres_comedy, genres_drama, genres_family, genres_sci_fi,  genres_thriller, 
+content_rating.G, content_rating.PG, content_rating.PG.13,content_rating.R,
+keywords_sex, keywords_space
+
+They may exist serious multicollinearity.
+
+#### Selected feature data: 26 features
+
+```{r}
+selected_movie = subset(cleanedmoviedata, select = c(gross, 
+isColor, duration, title_year, budget, aspect_ratio,imdb_score,
+isusa, isenglish,
+num_voted_users, num_user_for_reviews, num_critic_for_reviews,
+cast_total_facebook_likes, movie_facebook_likes, director_facebook_likes,
+genres_action,  genres_comedy, genres_drama, genres_family, genres_sci_fi,  genres_thriller, 
+content_rating.G, content_rating.PG, content_rating.PG.13,content_rating.R,
+keywords_sex, keywords_space))
+str(selected_movie)
+```
+
+However, we still find some problems with our dataset.
+
+#### Multicollinearity ? Yes
+
+```{r}
+library(car)
+fit <- lm(gross ~., data = selected_movie)
+summary(fit)
+vif(fit)
+cor(selected_movie)
+
+# num_voted_users / num_user_for_reviews / num_critic_for_reviews are highly correlated
+# we decide to combine num_user_for_reviews and num_critic_for_reviews 
+selected_movie$num_reviews = selected_movie$num_user_for_reviews + selected_movie$num_critic_for_reviews
+
+# content_rating.PG  content_rating.PG.13  content_rating.R are highly correlated
+# create a new varible content_rating_new according to the restrictive level
+selected_movie$content_rating_new <- 0
+selected_movie$content_rating_new[selected_movie$content_rating.PG == 1] <- 1
+selected_movie$content_rating_new[selected_movie$content_rating.PG.13 == 1] <- 2
+selected_movie$content_rating_new[selected_movie$content_rating.R == 1] <- 3
+
+# remove the highly correlated columns
+selected_movie = subset(selected_movie, select = c(
+- num_voted_users, - num_user_for_reviews, - num_critic_for_reviews,
+- content_rating.G, - content_rating.PG, - content_rating.PG.13))
+```
+
+#### Scaling problem ? Yes
+
+```{r}
+# the maximum numbers of different continuous variables have huge differences.
+apply(selected_movie, 2, min);
+apply(selected_movie, 2, max);
+# the maximun of budget is 1.221550e+10 compared to 1 the maximun of most dummy variable 
+# we need to scale the dependent variables.
+selected_movie$budget = scale(selected_movie$budget)
+selected_movie$cast_total_facebook_likes = scale(selected_movie$cast_total_facebook_likes)
+selected_movie$movie_facebook_likes = scale(selected_movie$movie_facebook_likes)
+selected_movie$director_facebook_likes = scale(selected_movie$director_facebook_likes)
+selected_movie$num_reviews = scale(selected_movie$num_reviews)
+```
+
+##### Model Selection process
+
+```{r}
+finalmoviedata <- selected_movie
+str(finalmoviedata)
+colnames(finalmoviedata)
+```
+
+
+#### Split train and test Set
+
+```{r}
+set.seed(1000)
+movie_sample <- sample(2, nrow(finalmoviedata), replace=TRUE, prob=c(0.67, 0.33))
+movie_train <- finalmoviedata[movie_sample==1, ] # contain gross
+movie_test <- finalmoviedata[movie_sample==2, ] # contain gross
+#Now we need to create our 'Y' variables 
+movie.trainY <- finalmoviedata[movie_sample==1, "gross"]
+movie.testY <- finalmoviedata[movie_sample==2, "gross"]
+```
+
+
+#### Linear Regression
+
+```{r}
+multmodel1 <- lm(gross~., data = movie_train)
+summary(multmodel1)
+
+multmodel2 <- lm(gross~ isColor + duration + title_year + imdb_score + isusa + isenglish + cast_total_facebook_likes + movie_facebook_likes + director_facebook_likes + genres_action + genres_comedy + genres_drama + genres_family + genres_sci_fi + genres_thriller + keywords_sex + keywords_space + num_reviews + content_rating_new, data = movie_train)
+summary (multmodel2)
+
+multmodel3 <- lm(gross~ isColor + duration + title_year + imdb_score + isusa + isenglish + cast_total_facebook_likes + movie_facebook_likes  + genres_action + genres_comedy + genres_drama + genres_family + genres_sci_fi + genres_thriller  + num_reviews + content_rating_new, data = movie_train)
+summary(multmodel3)
+
+multmodel4 <- lm(gross~ isColor + duration + title_year + imdb_score + isusa + isenglish + cast_total_facebook_likes  + genres_action + genres_comedy + genres_drama + genres_family + genres_sci_fi + genres_thriller + num_reviews + content_rating_new, data = movie_train)
+summary(multmodel4)
+
+multmodel5 <- lm(gross~ isColor + duration + title_year + isusa + isenglish + cast_total_facebook_likes  + genres_action + genres_comedy + genres_drama + genres_family + genres_sci_fi + genres_thriller + num_reviews, data = movie_train)
+summary(multmodel5)
+
+multmodel6 <- lm(gross~ isColor + duration + isusa + isenglish + cast_total_facebook_likes  + genres_action + genres_comedy + genres_drama + genres_family + genres_sci_fi + genres_thriller + num_reviews, data = movie_train)
+summary(multmodel6)
+
+max(movie_train$gross)
+min(movie_train$gross)
+#compare adjust R squared values and beta coefficient values
+```
+
+#### model6 is better
+
+```{r}
+anova(multmodel1, multmodel6)
+anova(multmodel2, multmodel6)
+anova(multmodel3, multmodel6)
+anova(multmodel4, multmodel6)
+anova(multmodel5, multmodel6)
+```
+
+#### checking residual plot
+
+```{r}
+library(forecast)
+fit <- auto.arima
+multmodel7 <- lm(gross~ isColor + duration + isusa + isenglish + cast_total_facebook_likes  + genres_action + genres_comedy + genres_drama + genres_family + genres_sci_fi + genres_thriller + num_reviews, data = movie_train)
+
+summary(multmodel6)
+
+par(mfrow=c(2,2))
+plot(multmodel6)
+
+#Durbin Watson test to check for autocorelation
+library(lmtest)
+dwtest(multmodel6)
+summary(multmodel6)
+
+```
+
+#### Predict gross  
+#### multiple linear regression rmse: 1.8
+
+```{r}
+pred_multilinear <- predict(multmodel6, movie_test)
+library(Metrics)
+rmse(movie_test$gross,pred_multilinear)
+```
+
+#### Random Forest  rmse:0.2566
+
+```{r}
+movie_rf2 <-subset(movie_train, select = -c(
+cast_total_facebook_likes, movie_facebook_likes, director_facebook_likes, content_rating.R))
+rf2 <- randomForest(movie_rf2,movie_train$gross,ntree=100,importance=TRUE,proximity = TRUE)
+pred_rf2 <- predict(rf2, movie_test)
+rmse(movie_test$gross,pred_rf2)
+```
+
+#### Lasso regression  rmse:0.06770657
+
+```{r}
+CARET.TRAIN.CTRL <- trainControl(method="repeatedcv",
+                                 number=5,
+                                 repeats=5,
+                                 verboseIter=FALSE)
+model_lasso <- train(x=movie_train,y=movie.trainY,
+                     method="glmnet",
+                     metric="RMSE",
+                     maximize=FALSE,
+                     trControl=CARET.TRAIN.CTRL,
+                     tuneGrid=expand.grid(alpha=1,  # Lasso regression
+                                          lambda=c(1,0.1,0.05,0.01,seq(0.009,0.001,-0.001),
+                                                   0.00075,0.0005,0.0001)))
+
+pred_lasso <- predict(model_lasso,newdata=movie_test)
+rmse(movie_test$gross,pred_lasso)
+```
+
